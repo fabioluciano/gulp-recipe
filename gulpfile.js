@@ -1,83 +1,128 @@
-var gulp        = require('gulp'),
-    uglify      = require('gulp-uglify'),
-    imagemin    = require('gulp-imagemin'),
-    jade        = require('gulp-jade'),
-    clean       = require('gulp-clean')
-    less        = require('gulp-less'),
-    concat      = require('gulp-concat'),
-    livereload  = require('gulp-livereload'),
-    tinylr      = require('tiny-lr'),
-    path        = require('path'),
-    server      = tinylr();
+(function () {
+    'use strict';
 
-var srcFolder           = 'src/'
-    javascriptSrcFolder = srcFolder + 'javascript/',
-    cssSrcFolder        = srcFolder + 'stylesheet/',
-    imagesSrcFolder     = srcFolder + 'images/',
-    lessSrcFolder       = srcFolder + 'less/',
-    jadeSrcFolder       = srcFolder + 'jade/',
+    // Libraries to import
+    var gulp = require('gulp'),
+        jshint = require('gulp-jshint'),
+        concat = require('gulp-concat'),
+        stripDebug = require('gulp-strip-debug'),
+        rimraf = require('rimraf'),
+        uglify = require('gulp-uglify'),
+        exec = require('child_process').exec,
+        jade = require('gulp-jade'),
+        less = require('gulp-less'),
+        CleanCSS = require('less-plugin-clean-css'),
 
-    targetFolder            = 'dist/',
-    javascriptTargetFolder  = targetFolder + 'javascript/',
-    cssTargetFolder         = targetFolder + 'css/',
-    imagesTargetFolder      = targetFolder + 'images/',
-    lessTargetFolder        = targetFolder + 'css/',
-    jadeTargetFolder        = targetFolder;
+        // Directory structure
+        directory = (function () {
+            var source = (function () {
+                var root = './src/',
+                    assets = function () {
+                        return root + 'assets/';
+                    },
+                    javascript = function () {
+                        return assets() + 'javascript/';
+                    },
+                    stylesheet = function () {
+                        return assets() + 'stylesheet/';
+                    },
+                    markup = function () {
+                        return root + 'jade/';
+                    },
+                    vendor = function () {
+                        return assets() + 'library/';
+                    };
 
+                return {
+                    root : root,
+                    assets : assets(),
+                    javascript :  javascript(),
+                    stylesheet :  stylesheet(),
+                    markup : markup(),
+                    vendor :  vendor()
+                };
+            }()),
+                target = (function () {
+                    var root = './dist/',
+                        markup = function () {
+                            return root;
+                        },
+                        assets = function () {
+                            return root + 'assets/';
+                        };
 
-gulp.task('clean', function() {
-  return gulp.src(targetFolder, {read:false})
-    .pipe(clean({force: true}));
-});
+                    return {
+                        root :  root,
+                        markup : markup(),
+                        assets :  assets()
+                    };
+                }());
 
-gulp.task('javascript', function() {
-  return gulp.src([javascriptSrcFolder + '*.js'])
-    .pipe(uglify())
-    .pipe(gulp.dest(javascriptTargetFolder))
-    .pipe(livereload(server));
-});
+            return {
+                source : source,
+                target : target
+            };
+        }());
 
-gulp.task('less', function() {
-  gulp.src(lessSrcFolder + 'less/*.less')
-    .pipe(less({
-      paths: [ path.join(__dirname, 'less', 'includes') ]
-    }))
-    .pipe(uglify())
-    .pipe(concat('all.min.css'))
-    .pipe(gulp.dest(cssTargetFolder))
-    .pipe(livereload(server));
-});
+    // Install dependencies in the right places
+    gulp.task('bower', function () {
+        return exec('bower-installer');
+    });
 
-gulp.task('images', function() {
-  return gulp.src(imagesSrcFolder + '*.(jpe?g|gif|png)')
-    .pipe(imagemin({
-      optimizationLevel: 5,
-      progressive: true,
-      interlaced: true
-    }))
-    .pipe(gulp.dest(imagesTargetFolder))
-    .pipe(livereload(server));
-});
+    // Clean the target directory to a new clean project
+    gulp.task('clean', function (cb) {
+        rimraf(directory.target.root, cb);
+    });
 
-gulp.task('jade', function() {
-  return gulp.src(jadeSrcFolder + '*.jade')
-    .pipe(jade())
-    .pipe(gulp.dest(jadeTargetFolder))
-    .pipe(livereload(server));
-});
+    // Concat all vendor javascript files, removes the debug informations and
+    // reruns the uglify on minimified files
+    gulp.task('javascript-vendor', ['clean'], function () {
+        return gulp.src([
+            directory.source.vendor + 'hammerjs/javascript/hammer.min.js',
+            directory.source.vendor + 'angular/javascript/angular.min.js',
+            directory.source.vendor + 'angular-animate/javascript/angular-animate.min.js',
+            directory.source.vendor + 'angular-aria/javascript/angular-aria.min.js',
+            directory.source.vendor + 'angular-animate/javascript/angular-animate.min.js'
+        ])
+            .pipe(concat('vendor.js'))
+            .pipe(stripDebug())
+            .pipe(uglify())
+            .pipe(gulp.dest(directory.target.assets));
+    });
 
-gulp.task('watch', function() {
-  server.listen(35729, function (err) {
-    if (err) {
-      return console.log(err);
-    }
+    // Check for inconsistences of javascript application files
+    gulp.task('jshint', ['clean'], function () {
+        return gulp.src('./src/assets/javascript/*.js')
+            .pipe(jshint())
+            .pipe(jshint.reporter('default'));
+    });
 
-    gulp.watch(javascriptSrcFolder + '*.js', 'javascript');
-    gulp.watch(lessSrcFolder += '*.less', 'less');
-    gulp.watch(imagesSrcFolder + '*.(jpe?g|gif|png)', 'images');
-    gulp.watch(jadeSrcFolder + '*.jade', 'less');
-  });
-});
+    // Concat javascript application files, removes comments and uglify.
+    gulp.task('javascript-application', ['clean'], function () {
+        return gulp.src('./src/assets/javascript/*.js')
+            .pipe(concat('application.js'))
+            .pipe(stripDebug())
+            .pipe(uglify())
+            .pipe(gulp.dest(directory.target.assets));
+    });
 
+    // Compile Jade files on html files
+    gulp.task('markup', ['clean'], function () {
+        return gulp.src(directory.source.markup +  '*.jade')
+            .pipe(jade())
+            .pipe(gulp.dest(directory.target.markup));
+    });
 
-gulp.task('default', ['clean', 'less', 'javascript', 'images', 'jade', 'watch']);
+    // Compile LESS files on css files
+    gulp.task('stylesheet', ['clean'], function () {
+        return gulp.src(directory.source.stylesheet + 'main.less')
+            .pipe(less({
+                plugins: [new CleanCSS({advanced: true})]
+            }))
+            .pipe(gulp.dest(directory.target.assets));
+    });
+
+    gulp.task('default', ['clean', 'build']);
+    gulp.task('build', ['bower', 'markup', 'javascript-vendor', 'jshint', 'javascript-application', 'stylesheet']);
+
+}());
